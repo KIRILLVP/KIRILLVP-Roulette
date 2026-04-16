@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
     <title>KIRILLVP ROULETTE</title>
@@ -27,7 +27,8 @@
         button { padding: 15px 40px; font-size: 18px; border-radius: 30px; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
         .start-btn { background: #0f0; color: #000; }
         .next-btn { background: #ff4444; color: #fff; display: none; }
-        button:hover { transform: scale(1.1); }
+        button:disabled { opacity: 0.5; cursor: not-allowed; background: #555; }
+        button:hover:not(:disabled) { transform: scale(1.1); }
         #statusText { margin-top: 10px; font-style: italic; opacity: 0.8; }
     </style>
 </head>
@@ -36,7 +37,7 @@
     <div id="ui">
         <div id="online">Онлайн: <span id="count">0</span></div>
         <div id="locationInfo">Собеседник: ...</div>
-        <div id="statusText">Загрузка камеры...</div>
+        <div id="statusText">Инициализация...</div>
     </div>
 
     <video id="remoteVideo" autoplay playsinline></video>
@@ -48,15 +49,27 @@
     </div>
 
     <div id="buttons">
-        <button id="startBtn" class="start-btn" onclick="pressStart()">ИСКАТЬ</button>
+        <button id="startBtn" class="start-btn" onclick="pressStart()" disabled>ЗАГРУЗКА...</button>
         <button id="nextBtn" class="next-btn" onclick="nextPartner()">СЛЕДУЮЩИЙ (Esc)</button>
     </div>
 
     <script>
         const socket = io();
-        
-        // Настройка Peer с бесплатным TURN-сервером (для обхода строгих NAT)
+        const statusText = document.getElementById('statusText');
+        const startBtn = document.getElementById('startBtn');
+        const locationInfo = document.getElementById('locationInfo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const volumeControl = document.getElementById('volumeControl');
+
+        let myStream;
+        let currentCall;
+        let myLocation = "Россия";
+
+        // Настройка Peer на твой личный сервер на Render
         const peer = new Peer({
+            host: location.hostname,
+            port: location.port || (location.protocol === 'https:' ? 443 : 80),
+            path: '/peerjs/myapp',
             config: {
                 'iceServers': [
                     { url: 'stun:stun.l.google.com:19302' },
@@ -69,31 +82,40 @@
             }
         });
 
-        const statusText = document.getElementById('statusText');
-        const locationInfo = document.getElementById('locationInfo');
-        const remoteVideo = document.getElementById('remoteVideo');
-        const volumeControl = document.getElementById('volumeControl');
+        // Когда Peer-сервер выдал нам ID (теперь это твой сервер, а не облако)
+        peer.on('open', (id) => {
+            console.log('Мой ID:', id);
+            if (myStream) {
+                startBtn.disabled = false;
+                startBtn.innerText = "ИСКАТЬ";
+                statusText.innerText = "Готов к поиску";
+            }
+        });
 
-        let myStream;
-        let currentCall;
-        let myLocation = "Россия";
+        peer.on('error', (err) => {
+            console.error('Ошибка Peer:', err);
+            statusText.innerText = "Ошибка сети. Перезагрузите страницу.";
+        });
 
-        // Безопасное определение локации (работает в РФ)
+        // Определение города
         async function getLocation() {
             try {
                 const res = await fetch('https://ipwho.is/');
                 const data = await res.json();
-                if (data.success) {
-                    myLocation = `${data.city}, ${data.country}`;
-                }
-            } catch (e) { console.log("Используем локацию по умолчанию"); }
+                if (data.success) myLocation = `${data.city}, ${data.country}`;
+            } catch (e) { console.log("Локация по умолчанию"); }
         }
         getLocation();
 
+        // Камера
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
             myStream = stream;
             document.getElementById('localVideo').srcObject = stream;
-            statusText.innerText = "Готов к поиску";
+            if (peer.id) {
+                startBtn.disabled = false;
+                startBtn.innerText = "ИСКАТЬ";
+                statusText.innerText = "Готов к поиску";
+            }
         }).catch(() => {
             statusText.innerText = "Ошибка: Доступ к камере запрещен!";
         });
@@ -133,8 +155,8 @@
         });
 
         function pressStart() {
-            if (!myStream || !peer.id) return alert("Ожидайте инициализации системы...");
-            document.getElementById('startBtn').style.display = "none";
+            if (!myStream || !peer.id) return;
+            startBtn.style.display = "none";
             document.getElementById('nextBtn').style.display = "block";
             socket.emit('findPartner', { peerId: peer.id, location: myLocation });
         }
