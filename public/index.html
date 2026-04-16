@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>KIRILLVP ROULETTE</title>
+    <link rel="icon" type="image/jpeg" href="KGlogo.jpg">
+    
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <style>
+        body, html { margin: 0; background: #000; color: white; height: 100%; overflow: hidden; font-family: Arial, sans-serif; }
+        #remoteVideo { width: 100%; height: 100%; object-fit: cover; background: #111; }
+        #localVideo { position: absolute; top: 20px; right: 20px; width: 200px; border: 2px solid #0f0; border-radius: 10px; z-index: 10; transform: scaleX(-1); }
+        
+        #ui { position: absolute; top: 20px; left: 20px; z-index: 10; text-shadow: 2px 2px 4px #000; }
+        #online { font-size: 18px; color: #0f0; }
+        #locationInfo { font-size: 22px; font-weight: bold; margin-top: 5px; color: #fff; }
+
+        #volumeContainer { 
+            position: absolute; bottom: 110px; left: 50%; transform: translateX(-50%); 
+            z-index: 10; background: rgba(0,0,0,0.6); padding: 10px 20px; border-radius: 20px;
+            display: flex; align-items: center; gap: 10px;
+        }
+        input[type=range] { cursor: pointer; accent-color: #0f0; }
+
+        #buttons { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 20px; }
+        button { padding: 15px 40px; font-size: 18px; border-radius: 30px; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        .start-btn { background: #0f0; color: #000; }
+        .next-btn { background: #ff4444; color: #fff; display: none; }
+        button:hover { transform: scale(1.1); }
+        #statusText { margin-top: 10px; font-style: italic; opacity: 0.8; }
+    </style>
+</head>
+<body>
+
+    <div id="ui">
+        <div id="online">Онлайн: <span id="count">0</span></div>
+        <div id="locationInfo">Собеседник: ...</div>
+        <div id="statusText">Загрузка камеры...</div>
+    </div>
+
+    <video id="remoteVideo" autoplay playsinline></video>
+    <video id="localVideo" autoplay muted playsinline></video>
+
+    <div id="volumeContainer">
+        <span>Звук:</span>
+        <input type="range" id="volumeControl" min="0" max="1" step="0.1" value="1">
+    </div>
+
+    <div id="buttons">
+        <button id="startBtn" class="start-btn" onclick="pressStart()">ИСКАТЬ</button>
+        <button id="nextBtn" class="next-btn" onclick="nextPartner()">СЛЕДУЮЩИЙ (Esc)</button>
+    </div>
+
+    <script>
+        const socket = io();
+        
+        // Настройка Peer с бесплатным TURN-сервером (для обхода строгих NAT)
+        const peer = new Peer({
+            config: {
+                'iceServers': [
+                    { url: 'stun:stun.l.google.com:19302' },
+                    { 
+                        urls: 'turn:openrelay.metered.ca:443',
+                        username: 'openrelayproject',
+                        credential: 'openrelayproject'
+                    }
+                ]
+            }
+        });
+
+        const statusText = document.getElementById('statusText');
+        const locationInfo = document.getElementById('locationInfo');
+        const remoteVideo = document.getElementById('remoteVideo');
+        const volumeControl = document.getElementById('volumeControl');
+
+        let myStream;
+        let currentCall;
+        let myLocation = "Россия";
+
+        // Безопасное определение локации (работает в РФ)
+        async function getLocation() {
+            try {
+                const res = await fetch('https://ipwho.is/');
+                const data = await res.json();
+                if (data.success) {
+                    myLocation = `${data.city}, ${data.country}`;
+                }
+            } catch (e) { console.log("Используем локацию по умолчанию"); }
+        }
+        getLocation();
+
+        navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
+            myStream = stream;
+            document.getElementById('localVideo').srcObject = stream;
+            statusText.innerText = "Готов к поиску";
+        }).catch(() => {
+            statusText.innerText = "Ошибка: Доступ к камере запрещен!";
+        });
+
+        volumeControl.addEventListener('input', (e) => {
+            remoteVideo.volume = e.target.value;
+        });
+
+        peer.on('call', call => {
+            currentCall = call;
+            call.answer(myStream);
+            call.on('stream', remoteStream => { 
+                remoteVideo.srcObject = remoteStream;
+                statusText.innerText = "В беседе";
+            });
+        });
+
+        socket.on('updateOnline', c => document.getElementById('count').innerText = c);
+
+        socket.on('partnerFound', (data) => {
+            locationInfo.innerText = "Собеседник: " + data.location;
+            statusText.innerText = "Подключение...";
+            const call = peer.call(data.peerId, myStream);
+            currentCall = call;
+            call.on('stream', remoteStream => { 
+                remoteVideo.srcObject = remoteStream;
+                statusText.innerText = "В беседе";
+            });
+        });
+
+        socket.on('partnerLeft', () => {
+            if (currentCall) currentCall.close();
+            remoteVideo.srcObject = null;
+            locationInfo.innerText = "Собеседник: ...";
+            statusText.innerText = "Поиск нового...";
+            socket.emit('findPartner', { peerId: peer.id, location: myLocation });
+        });
+
+        function pressStart() {
+            if (!myStream || !peer.id) return alert("Ожидайте инициализации системы...");
+            document.getElementById('startBtn').style.display = "none";
+            document.getElementById('nextBtn').style.display = "block";
+            socket.emit('findPartner', { peerId: peer.id, location: myLocation });
+        }
+
+        function nextPartner() {
+            socket.emit('requestNext');
+        }
+
+        window.addEventListener('keydown', (e) => {
+            if (e.key === "Escape") nextPartner();
+        });
+    </script>
+</body>
+</html>
