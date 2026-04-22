@@ -38,26 +38,79 @@
 <body>
 
     <div id="ui">
-        <div id="online">Онлайн: <span id="count">0</span></div>
-        <div id="locationInfo">Собеседник: ...</div>
-        <div id="statusText">Инициализация...</div>
+        <div id="online"><span id="txt-online">Онлайн</span>: <span id="count">0</span></div>
+        <div id="locationInfo"><span id="txt-partner">Собеседник</span>: ...</div>
+        <div id="statusText">...</div>
     </div>
 
     <video id="remoteVideo" autoplay playsinline></video>
     <video id="localVideo" autoplay muted playsinline></video>
 
     <div id="volumeContainer">
-        <span>Звук:</span>
+        <span id="txt-volume">Звук:</span>
         <input type="range" id="volumeControl" min="0" max="1" step="0.1" value="1">
     </div>
 
     <div id="buttons">
-        <button id="startBtn" class="start-btn" onclick="pressStart()" disabled>ЗАГРУЗКА...</button>
-        <button id="nextBtn" class="next-btn" onclick="nextPartner()">СЛЕДУЮЩИЙ (Esc)</button>
-        <button id="stopBtn" class="stop-btn" onclick="stopChat()">ЗАВЕРШИТЬ</button>
+        <button id="startBtn" class="start-btn" onclick="pressStart()" disabled>...</button>
+        <button id="nextBtn" class="next-btn" onclick="nextPartner()"></button>
+        <button id="stopBtn" class="stop-btn" onclick="stopChat()"></button>
     </div>
 
     <script>
+        // --- ЛОКАЛИЗАЦИЯ ---
+        const translations = {
+            ru: {
+                online: "Онлайн",
+                partner: "Собеседник",
+                volume: "Звук",
+                start: "ИСКАТЬ",
+                loading: "ЗАГРУЗКА...",
+                next: "СЛЕДУЮЩИЙ (Esc)",
+                stop: "ЗАВЕРШИТЬ",
+                ready: "Готов к поиску",
+                searching: "Поиск собеседника...",
+                connecting: "Подключение...",
+                inChat: "В беседе",
+                errorCam: "Ошибка: Доступ к камере запрещен!",
+                noPartners: "Сейчас нет свободных собеседников. Подождите или попробуйте позже.",
+                partnerLeft: "Собеседник покинул чат",
+                partnerDisconnected: "Собеседник отключился (проблемы с сетью)",
+                switched: "Вас переключили на другого пользователя"
+            },
+            en: {
+                online: "Online",
+                partner: "Partner",
+                volume: "Volume",
+                start: "SEARCH",
+                loading: "LOADING...",
+                next: "NEXT (Esc)",
+                stop: "STOP",
+                ready: "Ready to search",
+                searching: "Searching for partner...",
+                connecting: "Connecting...",
+                inChat: "In conversation",
+                errorCam: "Error: Camera access denied!",
+                noPartners: "No free partners available. Please wait or try later.",
+                partnerLeft: "Partner left the chat",
+                partnerDisconnected: "Partner disconnected (network issues)",
+                switched: "You were switched to another user"
+            }
+        };
+
+        // Определяем язык (если не русский — ставим английский)
+        const userLang = navigator.language.startsWith('ru') ? 'ru' : 'en';
+        const t = translations[userLang];
+
+        // Применяем переводы к статичным элементам
+        document.getElementById('txt-online').innerText = t.online;
+        document.getElementById('txt-partner').innerText = t.partner;
+        document.getElementById('txt-volume').innerText = t.volume;
+        document.getElementById('startBtn').innerText = t.loading;
+        document.getElementById('nextBtn').innerText = t.next;
+        document.getElementById('stopBtn').innerText = t.stop;
+
+        // --- ЛОГИКА ПРИЛОЖЕНИЯ ---
         const socket = io();
         const statusText = document.getElementById('statusText');
         const startBtn = document.getElementById('startBtn');
@@ -69,8 +122,8 @@
 
         let myStream;
         let currentCall;
-        let myLocation = "Россия";
-        let waitingCount = 0; // Количество свободных людей
+        let myLocation = "Earth";
+        let waitingCount = 0;
 
         const peer = new Peer({
             host: location.hostname,
@@ -91,8 +144,8 @@
         peer.on('open', (id) => {
             if (myStream) {
                 startBtn.disabled = false;
-                startBtn.innerText = "ИСКАТЬ";
-                statusText.innerText = "Готов к поиску";
+                startBtn.innerText = t.start;
+                statusText.innerText = t.ready;
             }
         });
 
@@ -101,7 +154,7 @@
                 const res = await fetch('https://ipwho.is/');
                 const data = await res.json();
                 if (data.success) myLocation = `${data.city}, ${data.country}`;
-            } catch (e) { console.log("Локация по умолчанию"); }
+            } catch (e) { console.log("Location default"); }
         }
         getLocation();
 
@@ -110,11 +163,11 @@
             document.getElementById('localVideo').srcObject = stream;
             if (peer.id) {
                 startBtn.disabled = false;
-                startBtn.innerText = "ИСКАТЬ";
-                statusText.innerText = "Готов к поиску";
+                startBtn.innerText = t.start;
+                statusText.innerText = t.ready;
             }
         }).catch(() => {
-            statusText.innerText = "Ошибка: Доступ к камере запрещен!";
+            statusText.innerText = t.errorCam;
         });
 
         volumeControl.addEventListener('input', (e) => {
@@ -126,7 +179,7 @@
             call.answer(myStream);
             call.on('stream', remoteStream => { 
                 remoteVideo.srcObject = remoteStream;
-                statusText.innerText = "В беседе";
+                statusText.innerText = t.inChat;
             });
         });
 
@@ -136,19 +189,25 @@
         });
 
         socket.on('partnerFound', (data) => {
-            locationInfo.innerText = "Собеседник: " + data.location;
-            statusText.innerText = "Подключение...";
+            locationInfo.innerHTML = `${t.partner}: ${data.location}`;
+            statusText.innerText = t.connecting;
             const call = peer.call(data.peerId, myStream);
             currentCall = call;
             call.on('stream', remoteStream => { 
                 remoteVideo.srcObject = remoteStream;
-                statusText.innerText = "В беседе";
+                statusText.innerText = t.inChat;
             });
         });
 
         socket.on('partnerLeft', (data) => {
             if (data && data.reason) {
-                alert(data.reason); // Показываем уведомление собеседнику
+                // Переводим причину, если она пришла в виде ключа
+                let msg = data.reason;
+                if (msg.includes('switched')) msg = t.switched;
+                else if (msg.includes('left')) msg = t.partnerLeft;
+                else if (msg.includes('disconnected')) msg = t.partnerDisconnected;
+                
+                alert(msg);
             }
             resetToMenu();
         });
@@ -156,28 +215,25 @@
         function pressStart() {
             if (!myStream || !peer.id) return;
             showChatUI();
-            statusText.innerText = "Поиск собеседника...";
+            statusText.innerText = t.searching;
             socket.emit('findPartner', { peerId: peer.id, location: myLocation });
         }
 
         function nextPartner() {
-            // Если в очереди никого нет (waitingCount === 0)
             if (waitingCount === 0) {
-                alert("Сейчас нет свободных собеседников. Подождите или попробуйте позже.");
+                alert(t.noPartners);
                 return;
             }
-
-            socket.emit('requestDisconnect', { reason: 'Вас переключили на другого пользователя' });
-            
+            socket.emit('requestDisconnect', { reason: 'switched' });
             setTimeout(() => {
                 showChatUI();
-                statusText.innerText = "Ищем следующего...";
+                statusText.innerText = t.searching;
                 socket.emit('findPartner', { peerId: peer.id, location: myLocation });
             }, 100);
         }
 
         function stopChat() {
-            socket.emit('requestDisconnect', { reason: 'Собеседник завершил диалог' });
+            socket.emit('requestDisconnect', { reason: 'left' });
         }
 
         function showChatUI() {
@@ -189,8 +245,8 @@
         function resetToMenu() {
             if (currentCall) currentCall.close();
             remoteVideo.srcObject = null;
-            locationInfo.innerText = "Собеседник: ...";
-            statusText.innerText = "Готов к поиску";
+            locationInfo.innerHTML = `${t.partner}: ...`;
+            statusText.innerText = t.ready;
             
             startBtn.style.display = "block";
             nextBtn.style.display = "none";
