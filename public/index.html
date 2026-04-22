@@ -70,6 +70,7 @@
         let myStream;
         let currentCall;
         let myLocation = "Россия";
+        let waitingCount = 0; // Количество свободных людей
 
         const peer = new Peer({
             host: location.hostname,
@@ -129,7 +130,10 @@
             });
         });
 
-        socket.on('updateOnline', c => document.getElementById('count').innerText = c);
+        socket.on('updateOnline', data => {
+            document.getElementById('count').innerText = data.total;
+            waitingCount = data.waiting;
+        });
 
         socket.on('partnerFound', (data) => {
             locationInfo.innerText = "Собеседник: " + data.location;
@@ -142,8 +146,10 @@
             });
         });
 
-        // Эта функция срабатывает и когда тебя скипнули, и когда ты сам нажал кнопку
-        socket.on('partnerLeft', () => {
+        socket.on('partnerLeft', (data) => {
+            if (data && data.reason) {
+                alert(data.reason); // Показываем уведомление собеседнику
+            }
             resetToMenu();
         });
 
@@ -155,8 +161,14 @@
         }
 
         function nextPartner() {
-            socket.emit('requestDisconnect'); // Рвем связь
-            // Ждем маленькую паузу и снова в бой
+            // Если в очереди никого нет (waitingCount === 0)
+            if (waitingCount === 0) {
+                alert("Сейчас нет свободных собеседников. Подождите или попробуйте позже.");
+                return;
+            }
+
+            socket.emit('requestDisconnect', { reason: 'Вас переключили на другого пользователя' });
+            
             setTimeout(() => {
                 showChatUI();
                 statusText.innerText = "Ищем следующего...";
@@ -165,7 +177,7 @@
         }
 
         function stopChat() {
-            socket.emit('requestDisconnect'); // Просто рвем связь и уходим в меню
+            socket.emit('requestDisconnect', { reason: 'Собеседник завершил диалог' });
         }
 
         function showChatUI() {
