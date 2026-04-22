@@ -21,10 +21,17 @@ let waitingPlayer = null;
 let pairs = {}; 
 
 io.on('connection', (socket) => {
-    io.emit('updateOnline', io.engine.clientsCount);
+    // Функция для обновления статуса онлайна и очереди
+    const broadcastStatus = () => {
+        io.emit('updateOnline', {
+            total: io.engine.clientsCount,
+            waiting: waitingPlayer ? 1 : 0
+        });
+    };
+
+    broadcastStatus();
 
     socket.on('findPartner', (data) => {
-        // Если кто-то уже ждет и это не тот же самый сокет
         if (waitingPlayer && waitingPlayer.id !== socket.id) {
             const partner = waitingPlayer;
             waitingPlayer = null;
@@ -34,33 +41,33 @@ io.on('connection', (socket) => {
             socket.emit('partnerFound', { peerId: partner.peerId, location: partner.location });
             io.to(partner.id).emit('partnerFound', { peerId: data.peerId, location: data.location });
         } else {
-            // Если никого нет, встаем в очередь
             waitingPlayer = { id: socket.id, peerId: data.peerId, location: data.location };
         }
+        broadcastStatus();
     });
 
-    // Когда пользователь нажимает "Следующий" или "Завершить"
-    socket.on('requestDisconnect', () => {
+    socket.on('requestDisconnect', (data) => {
         const partnerId = pairs[socket.id];
         if (partnerId) {
             delete pairs[socket.id]; 
             delete pairs[partnerId];
-            io.to(partnerId).emit('partnerLeft'); // Собеседник вылетает в меню
+            // Отправляем собеседнику причину отключения
+            io.to(partnerId).emit('partnerLeft', { reason: data.reason || 'Собеседник покинул чат' });
         }
-        // Если игрок был в поиске (waitingPlayer), убираем его
         if (waitingPlayer && waitingPlayer.id === socket.id) waitingPlayer = null;
         
-        socket.emit('partnerLeft'); // Сам игрок тоже получает сигнал возврата в меню
+        socket.emit('partnerLeft', { reason: null }); // Сам игрок уходит без уведомления себе
+        broadcastStatus();
     });
 
     socket.on('disconnect', () => {
         const partnerId = pairs[socket.id];
         if (partnerId) { 
             delete pairs[partnerId]; 
-            io.to(partnerId).emit('partnerLeft'); 
+            io.to(partnerId).emit('partnerLeft', { reason: 'Собеседник отключился (проблемы с сетью)' }); 
         }
         if (waitingPlayer && waitingPlayer.id === socket.id) waitingPlayer = null;
-        io.emit('updateOnline', io.engine.clientsCount);
+        broadcastStatus();
     });
 });
 
