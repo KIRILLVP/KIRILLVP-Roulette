@@ -24,11 +24,14 @@
         input[type=range] { cursor: pointer; accent-color: #0f0; }
 
         #buttons { position: absolute; bottom: 40px; left: 50%; transform: translateX(-50%); z-index: 10; display: flex; gap: 20px; }
-        button { padding: 15px 40px; font-size: 18px; border-radius: 30px; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        button { padding: 15px 30px; font-size: 18px; border-radius: 30px; border: none; cursor: pointer; font-weight: bold; transition: 0.3s; }
+        
         .start-btn { background: #0f0; color: #000; }
         .next-btn { background: #ff4444; color: #fff; display: none; }
+        .stop-btn { background: #555; color: #fff; display: none; }
+
         button:disabled { opacity: 0.5; cursor: not-allowed; background: #555; }
-        button:hover:not(:disabled) { transform: scale(1.1); }
+        button:hover:not(:disabled) { transform: scale(1.05); }
         #statusText { margin-top: 10px; font-style: italic; opacity: 0.8; }
     </style>
 </head>
@@ -51,12 +54,15 @@
     <div id="buttons">
         <button id="startBtn" class="start-btn" onclick="pressStart()" disabled>ЗАГРУЗКА...</button>
         <button id="nextBtn" class="next-btn" onclick="nextPartner()">СЛЕДУЮЩИЙ (Esc)</button>
+        <button id="stopBtn" class="stop-btn" onclick="stopChat()">ЗАВЕРШИТЬ</button>
     </div>
 
     <script>
         const socket = io();
         const statusText = document.getElementById('statusText');
         const startBtn = document.getElementById('startBtn');
+        const nextBtn = document.getElementById('nextBtn');
+        const stopBtn = document.getElementById('stopBtn');
         const locationInfo = document.getElementById('locationInfo');
         const remoteVideo = document.getElementById('remoteVideo');
         const volumeControl = document.getElementById('volumeControl');
@@ -65,7 +71,6 @@
         let currentCall;
         let myLocation = "Россия";
 
-        // Настройка Peer на твой личный сервер на Render
         const peer = new Peer({
             host: location.hostname,
             port: location.port || (location.protocol === 'https:' ? 443 : 80),
@@ -82,9 +87,7 @@
             }
         });
 
-        // Когда Peer-сервер выдал нам ID (теперь это твой сервер, а не облако)
         peer.on('open', (id) => {
-            console.log('Мой ID:', id);
             if (myStream) {
                 startBtn.disabled = false;
                 startBtn.innerText = "ИСКАТЬ";
@@ -92,12 +95,6 @@
             }
         });
 
-        peer.on('error', (err) => {
-            console.error('Ошибка Peer:', err);
-            statusText.innerText = "Ошибка сети. Перезагрузите страницу.";
-        });
-
-        // Определение города
         async function getLocation() {
             try {
                 const res = await fetch('https://ipwho.is/');
@@ -107,7 +104,6 @@
         }
         getLocation();
 
-        // Камера
         navigator.mediaDevices.getUserMedia({ video: true, audio: true }).then(stream => {
             myStream = stream;
             document.getElementById('localVideo').srcObject = stream;
@@ -146,27 +142,51 @@
             });
         });
 
+        // Эта функция срабатывает и когда тебя скипнули, и когда ты сам нажал кнопку
         socket.on('partnerLeft', () => {
-            if (currentCall) currentCall.close();
-            remoteVideo.srcObject = null;
-            locationInfo.innerText = "Собеседник: ...";
-            statusText.innerText = "Поиск нового...";
-            socket.emit('findPartner', { peerId: peer.id, location: myLocation });
+            resetToMenu();
         });
 
         function pressStart() {
             if (!myStream || !peer.id) return;
-            startBtn.style.display = "none";
-            document.getElementById('nextBtn').style.display = "block";
+            showChatUI();
+            statusText.innerText = "Поиск собеседника...";
             socket.emit('findPartner', { peerId: peer.id, location: myLocation });
         }
 
         function nextPartner() {
-            socket.emit('requestNext');
+            socket.emit('requestDisconnect'); // Рвем связь
+            // Ждем маленькую паузу и снова в бой
+            setTimeout(() => {
+                showChatUI();
+                statusText.innerText = "Ищем следующего...";
+                socket.emit('findPartner', { peerId: peer.id, location: myLocation });
+            }, 100);
+        }
+
+        function stopChat() {
+            socket.emit('requestDisconnect'); // Просто рвем связь и уходим в меню
+        }
+
+        function showChatUI() {
+            startBtn.style.display = "none";
+            nextBtn.style.display = "block";
+            stopBtn.style.display = "block";
+        }
+
+        function resetToMenu() {
+            if (currentCall) currentCall.close();
+            remoteVideo.srcObject = null;
+            locationInfo.innerText = "Собеседник: ...";
+            statusText.innerText = "Готов к поиску";
+            
+            startBtn.style.display = "block";
+            nextBtn.style.display = "none";
+            stopBtn.style.display = "none";
         }
 
         window.addEventListener('keydown', (e) => {
-            if (e.key === "Escape") nextPartner();
+            if (e.key === "Escape" && nextBtn.style.display === "block") nextPartner();
         });
     </script>
 </body>
